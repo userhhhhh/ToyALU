@@ -1,0 +1,214 @@
+
+// 31   30-23     22-0
+// s   e(指数）  m（尾数）
+
+// 数 = 尾数 * 2^指数
+// 参考了csdn：浮点数加法器设计
+
+module Float_Adder(
+    input clk,
+    input rst,
+    input [31:0] a,
+    input [31:0] b,
+    output reg [31:0] c,
+    output reg [1:0] overflow //0-没有溢出;01-上溢;10-下溢;11-NaN
+);
+    reg [24:0] m_a, m_b, m_c;//尾数
+    reg [7:0] e_a, e_b, e_c;//指数
+    reg s_a, s_b, s_c;//符号
+
+    reg [2:0] state_now, state_next;//状态机
+
+    // 初始化->检查xy是否为0->对xy对阶->尾数相加->尾数规格化->判断溢出
+
+    parameter start = 3'b000;
+    parameter zerocheck = 3'b001;
+    parameter equalcheck = 3'b010;
+    parameter addm = 3'b011;
+    parameter normal = 3'b100;
+    parameter over = 3'b110;
+
+    // 上升沿时，如果rst为0，状态机状态变为start
+    always @(posedge clk) begin
+        if(rst) begin
+            state_now <= state_next;
+        end
+        else begin
+            state_now <= start;
+        end
+    end
+
+    always @(state_now, a, b) begin
+        case (state_now)
+            start:begin
+                m_a <= {1'b0, 1'b1, a[22:0]};
+                e_a <= a[30:23];
+                s_a <= a[31];
+                m_b <= {1'b0, 1'b1, b[22:0]};
+                e_b <= b[30:23];
+                s_b <= b[31];
+                // $display("start: %b", a);
+                if(overflow == 2'b11 || overflow == 2'b01) begin
+                    state_next <= over;
+                end
+                // NaN
+                else if(e_a == 8'd255 && m_a[22:0] != 23'b0) begin
+                    overflow <= 2'b11;
+                    s_c <= 1'b1;
+                    m_c <= 23'b11111111111111111111111;
+                    e_c <= 8'b11111111;
+                    state_next <= over;
+                end
+                // NaN
+                else if(e_b == 8'd255 && m_b[22:0] != 23'b0) begin
+                    overflow <= 2'b11;
+                    s_c <= 1'b1;
+                    m_c <= 23'b11111111111111111111111;
+                    e_c <= 8'b11111111;
+                    state_next <= over;
+                end
+                // 无穷大
+                else if(e_a == 8'd255 && m_a[22:0] == 23'b0) begin
+                    overflow <= 2'b01;
+                    s_c <= 1'b0;
+                    m_c <= 23'b11111111111111111111111;
+                    e_c <= 8'b11111111;
+                    state_next <= over;
+                end
+                // 无穷大
+                else if(e_b == 8'd255 && m_b[22:0] == 23'b0) begin
+                    overflow <= 2'b01;
+                    s_c <= 1'b0;
+                    m_c <= 23'b11111111111111111111111;
+                    e_c <= 8'b11111111;
+                    state_next <= over;
+                end
+                else if(e_a == 8'b0 && m_a[22:0] != 23'b0) begin
+                    m_a <= {1'b0, 1'b0, a[22:0]};
+                    state_next <= over;
+                end
+                else if(e_b == 8'b0 && m_b[22:0] != 23'b0) begin
+                    m_b <= {1'b0, 1'b0, b[22:0]};
+                    state_next <= over;
+                end
+                else begin
+                    overflow <= 2'b00;
+                    state_next <= zerocheck;
+                end
+            end 
+            zerocheck:begin
+                //检查xy是否为0
+                if(m_a[22:0] == 23'b0 && e_a == 8'b0) begin
+                    s_c <= s_b;
+                    m_c <= m_b;
+                    e_c <= e_b;
+                    state_next <= over;
+                end
+                else if(m_b[22:0] == 23'b0 && e_b == 8'b0) begin
+                    s_c <= s_a;
+                    m_c <= m_a;
+                    e_c <= e_a;
+                    state_next <= over;
+                end
+                else begin
+                    state_next <= equalcheck;
+                end
+            end
+            equalcheck:begin
+                if(e_a == e_b) begin
+                    state_next <= addm;
+                end
+                else if(e_a < e_b)begin
+                    m_a <= {m_a >> (e_b - e_a)};
+                    e_a <= e_b;
+                    state_next <= addm;
+                end
+                else begin
+                    m_b <= {m_b >> (e_a - e_b)};
+                    e_b <= e_a;
+                    state_next <= addm;
+                end
+            end
+            addm:begin
+                //符号相同
+                if(a[31] ^ b[31] == 1'b0) begin
+                    e_c <= e_a;
+                    s_c <= a[31];
+                    m_c <= m_a + m_b;
+                    state_next <= normal;
+                    // $display(a[31], b[31]);
+                    // $display("debug");
+                end
+                //符号不同
+                else begin
+                    if(m_a > m_b) begin
+                        e_c <= e_a;
+                        s_c <= s_a;
+                        m_c <= m_a - m_b;
+                        state_next <= normal;
+                    end
+                    else if(m_a < m_b) begin
+                        e_c <= e_b;
+                        s_c <= s_b;
+                        m_c <= m_b - m_a;
+                        state_next <= normal;
+                    end
+                    else begin
+                        e_c <= e_a;
+                        m_c <= 23'b0;
+                        s_c <= 1'b0;
+                        state_next <= over;
+                    end
+                end
+                // $display(e_c);
+            end
+            normal:begin
+                // 有进位
+                if(m_c[24] == 1'b1) begin
+                    m_c <= {1'b1, m_c[23:0]};
+                    e_c <= e_c + 1'b1;
+                    state_next <= over;
+                end
+                // 无进位
+                else begin
+                    if(m_c[23] == 1'b0 && e_c >= 1) begin
+                        e_c <= e_c - 1'b1;
+                        m_c <= {m_c[23:0], 1'b0};
+                        state_next <= normal;
+                    end
+                    else begin
+                        state_next <= over;
+                    end
+                end
+            end
+            over:begin
+                c = {s_c, e_c[7:0], m_c[22:0]};
+                if(overflow) begin
+                    overflow <= overflow;
+                    state_next <= start;
+                end
+                else if(e_c == 8'd255) begin
+                    overflow <= 2'b01;
+                    state_next <= start;
+                    // $display("overflow=%b",overflow);
+                end
+                else if(e_c == 8'd0 && m_c[22:0] != 23'b0) begin
+                    overflow <= 2'b10;
+                    state_next <= start;
+                end
+                // else if(m_c[24] == 1'b1) begin
+                //     overflow <= 2'b01;
+                //     state_next <= start;
+                // end
+                else begin
+                    overflow <= 2'b00;
+                    state_next <= start;
+                end
+            end
+            default: begin
+                state_next <= start;
+            end
+        endcase
+    end
+
+endmodule

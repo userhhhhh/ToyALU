@@ -29,8 +29,10 @@ module Float_Adder(
     parameter over = 3'b110;
 
     // 上升沿时，如果rst为0，状态机状态变为start
-    always @(posedge clk) begin
+    always @(posedge clk or negedge rst) begin
+        // $display("rst1");
         if(rst) begin
+            // $display("rst");
             state_now <= state_next;
         end
         else begin
@@ -39,6 +41,8 @@ module Float_Adder(
     end
 
     always @(state_now, a, b) begin
+        // $display("start: %b", a);
+        // $display("state_now: %b", state_now);
         case (state_now)
             start:begin
                 m_a <= {1'b0, 1'b1, a[22:0]};
@@ -48,6 +52,9 @@ module Float_Adder(
                 e_b <= b[30:23];
                 s_b <= b[31];
                 // $display("start: %b", a);
+                // $display(a[31]);
+                // $display("%b",a[30:23]);
+                // $display("fuck");
                 if(overflow == 2'b11 || overflow == 2'b01) begin
                     state_next <= over;
                 end
@@ -92,6 +99,7 @@ module Float_Adder(
                     state_next <= over;
                 end
                 else begin
+                    // $display("debug");
                     overflow <= 2'b00;
                     state_next <= zerocheck;
                 end
@@ -111,11 +119,17 @@ module Float_Adder(
                     state_next <= over;
                 end
                 else begin
+                    // $display("debug1");
+                    // $display(e_a);
                     state_next <= equalcheck;
                 end
             end
             equalcheck:begin
+                // $display("debug2");
+                // $display(e_a);
+                // $display(e_b);
                 if(e_a == e_b) begin
+                    // $display("debug");
                     state_next <= addm;
                 end
                 else if(e_a < e_b)begin
